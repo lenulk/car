@@ -215,6 +215,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { Reflector } from 'three/addons/objects/Reflector.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -427,7 +428,7 @@ const shadowTex = canvasTex(256, (g, s) => {
 /* ---------- materials ---------- */
 // irid / sheen: a pearl that shifts colour towards the edges (violet -> blue-green, like the classic midnight purples)
 const PAINTS = [
-  { name: 'Deep Violet Pearl', hex: '#4b1c78', metal: .5, rough: .3, coat: 1, coatRough: .03, flake: true, irid: .55, iridIOR: 1.5, iridRange: [260, 600], sheen: .45, sheenHex: '#2b7d8f' },
+  { name: 'Deep Violet Pearl', hex: '#4b1c78', metal: .5, rough: .3, coat: 1, coatRough: .03, flake: true, irid: .55, iridIOR: 1.5, iridRange: [260, 600], sheen: .6, sheenHex: '#2b7d8f' },
   { name: 'Sunset Orange Metallic', hex: '#c2420d', metal: .55, rough: .32, coat: 1, coatRough: .03, flake: true, irid: .12, iridIOR: 1.4, iridRange: [300, 500], sheen: 0 },
   { name: 'Chicane Yellow', hex: '#e8b90c', metal: .12, rough: .28, coat: 1, coatRough: .02, flake: false, irid: 0, sheen: 0 },
   { name: 'Daytona Blue', hex: '#1b4fa3', metal: .55, rough: .3, coat: 1, coatRough: .03, flake: true, irid: .15, iridIOR: 1.4, iridRange: [300, 500], sheen: 0 },
@@ -437,7 +438,8 @@ const PAINTS = [
 ];
 function paintProps(m, p) {
   m.color.set(p.hex); m.metalness = p.metal; m.roughness = p.rough; m.clearcoat = p.coat; m.clearcoatRoughness = p.coatRough;
-  m.iridescence = p.irid || 0; m.iridescenceIOR = p.iridIOR || 1.3; m.iridescenceThicknessRange = (p.iridRange || [100, 400]).slice();
+  // thin-film iridescence is left off: it produced NaN pixels (black flicker) on some GPUs; sheen gives the edge shift
+  m.iridescence = 0;
   m.sheen = p.sheen || 0; m.sheenRoughness = .45; m.sheenColor.set(p.sheenHex || '#000000');
   return m;
 }
@@ -3983,6 +3985,16 @@ gtao.overrideVisibility = function () {
   scene.traverse(o => { if (o === mirror || (o.isMesh && [].concat(o.material).every(m => m.transparent))) o.visible = false; });
 };
 composer.addPass(gtao);
+// NaN/Inf guard before bloom: on some GPUs a single invalid pixel from a physical
+// material gets blurred by the bloom mip chain into a flickering black block
+const nanGuard = new ShaderPass({
+  uniforms: { tDiffuse: { value: null } },
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `uniform sampler2D tDiffuse; varying vec2 vUv;
+    float ok(float x) { return (x >= 0.0 && x <= 65000.0) ? x : 0.0; }
+    void main() { vec4 c = texture2D(tDiffuse, vUv); gl_FragColor = vec4(ok(c.r), ok(c.g), ok(c.b), ok(c.a)); }`,
+});
+composer.addPass(nanGuard);
 const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), .38, .5, 1.6);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
@@ -4871,6 +4883,7 @@ function frame() {
   requestAnimationFrame(frame);
 }
 if (captureMode) {
+  window.__nanGuard = nanGuard;
   document.body.classList.add('capture');
   window.__dbg = { car, THREE, paint, glass, ghPoint, bodyPoint, ghH, ghW, topF, ROOF, crownY, bodySurfY, phiTopDeg, PANELS, winTop, hatchQ };
   window.__cine = {
