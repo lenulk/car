@@ -603,7 +603,7 @@ function patch(fn, side, offset, nu, nv, mat, cast = false) {
   }
   for (let i = 0; i < nu; i++) for (let j = 0; j < nv; j++) {
     const a = i * (nv + 1) + j, b = a + 1, c = a + nv + 1, d = c + 1;
-    idx.push(a, c, b, b, c, d);
+    if (side > 0) idx.push(a, c, b, b, c, d); else idx.push(a, b, c, b, d, c); // mirrored side: keep faces outward
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
